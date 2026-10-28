@@ -1,0 +1,64 @@
+# ═══════════════════════════════════════════════════════════════════
+#  The Foundry — Ghost Core v1.0
+#  Tek komut:  docker compose up -d --build
+#  Panel:      http://localhost:4040
+#
+#  - Redis 7 (AOF kalıcılığı) + Ghost Core (BullMQ modunda)
+#  - Docker soketi bağlanır: DRY_RUN_DOCKER=false yapılırsa her mikro-araç
+#    ayrı bir nginx:alpine konteynerinde (128MB / 0.2 CPU) yayınlanır.
+#  - .env dosyasındaki tüm ayarlar kullanılır; aşağıdakiler kuyruk ve ağ için
+#    konteynere özel olarak ezilir.
+# ═══════════════════════════════════════════════════════════════════
+name: ghost-foundry
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: ghost-redis
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  ghost-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghost-foundry:1.0.0
+    container_name: ghost-core
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      USE_IN_MEMORY_QUEUE: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # Ghost Core konteyner içinde çalıştığı için nginx konteynerleri host'a bağlanır;
+      # artifacts klasörünün host yolu, konteynerin kendi bağlama noktasından otomatik bulunur.
+      DOCKER_SOCKET_PATH: /var/run/docker.sock
+    ports:
+      - "127.0.0.1:4040:4040"
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+      - ./logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4040/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 20s
+
+volumes:
+  redis-data:

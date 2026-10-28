@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghost Foundry — Flight Recorder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          ui: ['"Chakra Petch"', 'system-ui', 'sans-serif'],
+          term: ['"IBM Plex Mono"', 'ui-monospace', 'Menlo', 'Consolas', 'monospace'],
+        },
+        colors: {
+          ink: { 950: '#0a0714', 900: '#110c20', 850: '#150f28', 800: '#1c1533', 700: '#2a2147', 600: '#3b2f61' },
+          haze: '#ddd8f0',
+          mute: '#8f88ad',
+          neon: { cyan: '#3df5ff', pink: '#ff4d8d', amber: '#ffb547', mint: '#4dffb4', violet: '#a98bff', sky: '#5ac8ff', blood: '#ff3b5c' },
+        },
+      },
+    },
+  };
+</script>
+<style>
+  :root { color-scheme: dark; }
+  html, body { background: #0a0714; }
+  body { font-family: "Chakra Petch", system-ui, sans-serif; }
+  ::selection { background: rgba(61, 245, 255, .25); }
+  *:focus-visible { outline: 2px solid #3df5ff; outline-offset: 2px; border-radius: 4px; }
+  .scroll-thin { scrollbar-width: thin; scrollbar-color: #3b2f61 transparent; }
+  .scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scroll-thin::-webkit-scrollbar-thumb { background: #3b2f61; border-radius: 6px; }
+
+  /* Panel çerçeveleri: köşe kesikli komuta paneli hissi */
+  .panel { background: linear-gradient(180deg, #120d22 0%, #0e0a1b 100%); border: 1px solid #2a2147; clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px)); }
+  .field { background: #0a0714; border: 1px solid #2a2147; border-radius: 6px; color: #ddd8f0; }
+  .field:focus { border-color: #3df5ff; outline: none; box-shadow: 0 0 0 3px rgba(61, 245, 255, .15); }
+  .btn { display: inline-flex; align-items: center; gap: .4rem; border-radius: 6px; padding: .45rem .75rem; font-weight: 600; font-size: .8rem; border: 1px solid #3b2f61; background: #1c1533; color: #ddd8f0; transition: border-color .15s, background .15s, color .15s; }
+  .btn:hover:not(:disabled) { border-color: #a98bff; background: #241b42; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-primary { background: #3df5ff; color: #0a0714; border-color: #3df5ff; }
+  .btn-primary:hover:not(:disabled) { background: #8af9ff; border-color: #8af9ff; color: #0a0714; }
+  .btn-danger { color: #ff8aa0; border-color: #5a2340; }
+  .btn-danger:hover:not(:disabled) { border-color: #ff3b5c; background: #2a0f1d; }
+
+  /* Ajan rol rozeti */
+  .role-chip { color: var(--role); border: 1px solid color-mix(in srgb, var(--role) 45%, transparent); background: color-mix(in srgb, var(--role) 10%, transparent); border-radius: 4px; padding: 0 .4rem; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .dna-ref { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: #8f88ad; border-bottom: 1px dashed #3b2f61; }
+  .dna-ref:hover { color: #3df5ff; border-color: #3df5ff; }
+
+  /* Kara kutu akışı */
+  #feed[data-filter="council"] .entry-log { display: none; }
+  #feed[data-filter="system"] .entry-debate { display: none; }
+  .feed-pre { white-space: pre-wrap; word-break: break-word; font-family: "IBM Plex Mono", monospace; font-size: 12px; line-height: 1.55; color: #b9b2d6; }
+  .entry { border-left: 2px solid var(--role, #2a2147); padding: .45rem .6rem .5rem .7rem; }
+  .entry-debate { background: linear-gradient(90deg, color-mix(in srgb, var(--role) 6%, transparent), transparent 60%); }
+  details > summary { cursor: pointer; list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+
+  /* DNA yaşam hattı (jel şeridi) */
+  .lifeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; }
+  .lifeline span { height: 6px; border-radius: 1px; background: #241b42; position: relative; }
+  .lifeline span.done { background: #a98bff; }
+  .lifeline span.live { background: #3df5ff; box-shadow: 0 0 10px rgba(61, 245, 255, .6); }
+  .lifeline span.immortal { background: #ffb547; box-shadow: 0 0 10px rgba(255, 181, 71, .55); }
+  .lifeline span.fail { background: #ff3b5c; }
+  .lifeline span.parked { background: repeating-linear-gradient(135deg, #ffb547 0 4px, #6b4a17 4px 8px); }
+  .lifeline span.active { background: #3df5ff; animation: breathe 1.4s ease-in-out infinite; }
+  @keyframes breathe { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+
+  .ping-flash { animation: pingflash .7s ease-out; }
+  @keyframes pingflash { 0% { color: #0a0714; background: #3df5ff; } 100% { color: #3df5ff; background: transparent; } }
+  .verdict-flash { animation: verdict 1.2s ease-out; }
+  @keyframes verdict { 0% { box-shadow: 0 0 0 0 var(--flash); } 40% { box-shadow: 0 0 0 6px var(--flash); } 100% { box-shadow: 0 0 0 0 transparent; } }
+  .dots::after { content: ''; animation: dots 1.2s steps(4) infinite; }
+  @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+
+  dialog::backdrop { background: rgba(5, 3, 12, .78); backdrop-filter: blur(3px); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body class="text-haze min-h-screen lg:h-screen lg:overflow-hidden flex flex-col">
+
+<!-- ═══ Üst bar ═══ -->
+<header class="border-b border-ink-700 bg-ink-950/95 px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
+  <div class="flex items-center gap-3 min-w-0">
+    <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true" class="shrink-0">
+      <path d="M17 3 C9 3 6 9 6 15 L6 29 L10 26 L13.5 29 L17 26 L20.5 29 L24 26 L28 29 L28 15 C28 9 25 3 17 3 Z" fill="none" stroke="#3df5ff" stroke-width="1.6"/>
+      <path d="M12.5 14 C14 11 15.5 17 17 14 C18.5 11 20 17 21.5 14" fill="none" stroke="#ff4d8d" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    <div class="leading-tight">
+      <h1 class="font-ui font-bold text-lg tracking-wide text-haze">Ghost Foundry</h1>
+      <p class="text-[11px] text-mute font-term">Ghost Core v1.0 flight recorder</p>
+    </div>
+  </div>
+  <div class="flex items-center gap-2 text-xs" role="status" aria-live="polite">
+    <span id="conn-dot" class="inline-block w-2.5 h-2.5 rounded-full bg-neon-blood"></span>
+    <span id="conn-text" class="text-mute">Bağlanıyor</span>
+  </div>
+  <dl class="flex flex-wrap items-stretch gap-2 ml-auto text-xs">
+    <div class="px-3 py-1.5 border border-ink-700 rounded-md">
+      <dt class="text-mute">Mutasyon nesli</dt>
+      <dd class="font-term text-neon-amber text-base font-semibold">Gen #<span id="m-gen">1</span></dd>
+    </div>
+    <div class="px-3 py-1.5 border border-ink-700 rounded-md min-w-[150px]">
+      <dt class="text-mute">Harcanan bütçe</dt>
+      <dd class="font-term text-base font-semibold"><span id="m-cost">$0.0000</span> <span class="text-mute text-xs" id="m-cap">/ $10</span></dd>
+      <div class="h-1 mt-1 bg-ink-700 rounded"><div id="m-cost-bar" class="h-1 rounded bg-neon-pink" style="width:0%"></div></div>
+    </div>
+    <div class="px-3 py-1.5 border border-ink-700 rounded-md">
+      <dt class="text-mute">Aktif uygulama</dt>
+      <dd class="font-term text-neon-cyan text-base font-semibold"><span id="m-active">0</span><span class="text-mute text-xs">/<span id="m-max">10</span></span></dd>
+    </div>
+    <div class="px-3 py-1.5 border border-ink-700 rounded-md">
+      <dt class="text-mute">DNA</dt>
+      <dd class="font-term text-base font-semibold" id="m-dna">0</dd>
+    </div>
+    <div class="px-3 py-1.5 border border-ink-700 rounded-md hidden sm:block">
+      <dt class="text-mute">Motorlar</dt>
+      <dd class="font-term text-[12px] leading-5"><span id="m-queue">–</span> kuyruk<br><span id="m-deploy">–</span></dd>
+    </div>
+  </dl>
+</header>
+
+<div id="warnings" class="hidden border-b border-neon-amber/40 bg-[#1f1608] text-neon-amber text-xs px-4 py-2 space-y-1"></div>
+
+<!-- ═══ Ana ızgara ═══ -->
+<main class="flex-1 min-h-0 grid gap-3 p-3 lg:grid-cols-[minmax(320px,380px)_1fr_minmax(300px,360px)]">
+
+  <!-- ─── Sol: Komuta + Kara kutu ─── -->
+  <section class="flex flex-col gap-3 min-h-0" aria-label="Komuta ve ajan tartışması">
+    <div class="panel p-4 space-y-4">
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <h2 class="font-semibold">Canlı radar</h2>
+          <p class="text-xs text-mute" id="scout-meta">HackerNews, GitHub ve Reddit henüz taranmadı.</p>
+        </div>
+        <button id="btn-scout" class="btn btn-primary shrink-0" type="button">Radarı tara</button>
+      </div>
+      <form id="inject-form" class="space-y-2" novalidate>
+        <h2 class="font-semibold">Sinyal enjekte et</h2>
+        <label class="block text-xs text-mute" for="inj-title">Darboğazın adı</label>
+        <input id="inj-title" name="title" class="field w-full px-3 py-2 text-sm" maxlength="200" required placeholder="Örn. Cron ifadelerini okumak zor">
+        <label class="block text-xs text-mute" for="inj-desc">Ne acıtıyor, kimi, ne sıklıkla?</label>
+        <textarea id="inj-desc" name="description" rows="2" class="field w-full px-3 py-2 text-sm resize-y" maxlength="4000" required placeholder="Sorunu somut anlat; Konsey onu tek sayfalık bir araca dönüştürür."></textarea>
+        <details class="group">
+          <summary class="text-xs text-neon-cyan hover:underline">Hedef kullanıcı ve araç fikri ekle</summary>
+          <div class="grid grid-cols-2 gap-2 mt-2">
+            <div>
+              <label class="block text-xs text-mute" for="inj-user">Hedef kullanıcı</label>
+              <input id="inj-user" name="target_user" class="field w-full px-3 py-2 text-sm" maxlength="300" placeholder="Örn. SRE ekipleri">
+            </div>
+            <div>
+              <label class="block text-xs text-mute" for="inj-concept">Araç fikri</label>
+              <input id="inj-concept" name="tool_concept" class="field w-full px-3 py-2 text-sm" maxlength="600" placeholder="Örn. log süzgeci">
+            </div>
+          </div>
+        </details>
+        <p id="inj-error" class="text-xs text-neon-blood min-h-[1rem]" role="alert"></p>
+        <button class="btn w-full justify-center" type="submit" id="btn-inject">Konsey'e gönder</button>
+      </form>
+    </div>
+
+    <div class="panel h-[75vh] lg:h-auto lg:flex-1 lg:min-h-0 flex flex-col">
+      <div class="flex items-center gap-2 px-4 pt-3 pb-2 border-b border-ink-700">
+        <h2 class="font-semibold mr-auto">Kara kutu</h2>
+        <div class="flex text-xs border border-ink-700 rounded-md overflow-hidden" role="tablist" aria-label="Akış filtresi">
+          <button class="px-2.5 py-1 feed-tab" data-feed="council" role="tab">Tartışma</button>
+          <button class="px-2.5 py-1 feed-tab" data-feed="system" role="tab">Sistem</button>
+          <button class="px-2.5 py-1 feed-tab" data-feed="all" role="tab">Tümü</button>
+        </div>
+      </div>
+      <div id="thinking" class="px-4 py-1.5 text-xs font-term space-y-0.5 border-b border-ink-700/60 empty:hidden" aria-live="polite"></div>
+      <ol id="feed" data-filter="council" class="flex-1 min-h-0 overflow-y-auto scroll-thin px-2 py-2 space-y-1.5 text-sm"></ol>
+      <label class="flex items-center gap-2 px-4 py-2 border-t border-ink-700 text-xs text-mute">
+        <input type="checkbox" id="autoscroll" checked class="accent-[#3df5ff]"> Yeni mesajları takip et
+      </label>
+    </div>
+  </section>
+
+  <!-- ─── Orta: DNA evrim hattı ─── -->
+  <section class="panel flex flex-col h-[85vh] lg:h-auto lg:min-h-0" aria-label="DNA evrim hattı">
+    <div class="px-4 pt-3 pb-2 border-b border-ink-700 flex flex-wrap items-center gap-2">
+      <h2 class="font-semibold mr-auto">DNA evrim hattı</h2>
+      <div id="filters" class="flex flex-wrap gap-1.5 text-xs" role="tablist" aria-label="Durum filtresi"></div>
+    </div>
+    <div id="pipeline" class="flex-1 min-h-0 overflow-y-auto scroll-thin p-3 grid gap-3 2xl:grid-cols-2 content-start"></div>
+    <div id="pipeline-empty" class="hidden flex-1 p-8 text-center text-mute">
+      <p class="text-haze font-semibold mb-1">Hat boş.</p>
+      <p class="text-sm">Radarı tara ya da soldan bir darboğaz enjekte et; Konsey ilk DNA'yı tartışmaya başlasın.</p>
+    </div>
+  </section>
+
+  <!-- ─── Sağ: Genetik hafıza + Mezarlık ─── -->
+  <section class="flex flex-col gap-3 min-h-0" aria-label="Genetik hafıza ve mezarlık">
+    <div class="panel p-4 flex flex-col min-h-0 lg:max-h-[58%]">
+      <div class="flex items-end justify-between gap-3 mb-3">
+        <div>
+          <h2 class="font-semibold">Genetik hafıza</h2>
+          <p class="text-[11px] text-mute font-term">evolutionary_rules.json</p>
+        </div>
+        <div class="text-right">
+          <p class="font-term text-3xl font-semibold text-neon-amber leading-none" id="g-gen">1</p>
+          <p class="text-[11px] text-mute">nesil</p>
+        </div>
+      </div>
+      <p class="text-xs text-mute mb-2" id="g-survival">Henüz Darwin testi yapılmadı.</p>
+      <div id="genome" class="overflow-y-auto scroll-thin space-y-3 pr-1 text-[13px]"></div>
+    </div>
+    <div class="panel p-4 h-[60vh] lg:h-auto lg:flex-1 lg:min-h-0 flex flex-col">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="font-semibold">Mezarlık</h2>
+        <span class="text-xs text-mute font-term" id="gy-count">0</span>
+      </div>
+      <ol id="graveyard" class="flex-1 min-h-0 overflow-y-auto scroll-thin space-y-2 pr-1"></ol>
+    </div>
+  </section>
+</main>
+
+<!-- ═══ DNA ayrıntı penceresi ═══ -->
+<dialog id="detail" class="panel w-[min(960px,94vw)] max-h-[88vh] p-0 text-haze">
+  <div class="flex items-center gap-3 px-5 py-3 border-b border-ink-700 sticky top-0 bg-ink-900 z-10">
+    <h2 id="detail-title" class="font-semibold mr-auto truncate">DNA</h2>
+    <button class="btn" type="button" id="detail-close" aria-label="Kapat">Kapat</button>
+  </div>
+  <div id="detail-body" class="px-5 py-4 space-y-5 overflow-y-auto scroll-thin max-h-[calc(88vh-60px)]"></div>
+</dialog>
+
+<div id="toasts" class="fixed bottom-4 right-4 z-50 space-y-2 w-[min(360px,92vw)]" aria-live="assertive"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+'use strict';
+
+// ─── Sözlükler ─────────────────────────────────────────────────────
+const ROLES = {
+  scout:      { label: 'Gözcü',     color: '#5ac8ff', icon: '◎' },
+  proposer:   { label: 'Vizyoner',  color: '#3df5ff', icon: '◆' },
+  critic:     { label: 'Eleştirmen',color: '#ff4d8d', icon: '✕' },
+  arbitrator: { label: 'Hakem',     color: '#ffb547', icon: '⚖' },
+  forge:      { label: 'Forge',     color: '#a98bff', icon: '⚒' },
+  deployer:   { label: 'Dağıtıcı',  color: '#4dffb4', icon: '⇪' },
+  reaper:     { label: 'Reaper',    color: '#ff3b5c', icon: '☠' },
+  system:     { label: 'Sistem',    color: '#8f88ad', icon: '▪' },
+};
+const LEVEL_COLOR = { error: '#ff3b5c', warn: '#ffb547', info: '#8f88ad', debug: '#5b5478', verbose: '#5b5478', http: '#5b5478' };
+const STATUS = {
+  SCOUTED:         { label: 'Sinyal',             color: '#5ac8ff' },
+  IN_COUNCIL:      { label: 'Konseyde',           color: '#ffb547' },
+  APPROVED:        { label: 'Onaylandı',          color: '#a98bff' },
+  REJECTED:        { label: 'Reddedildi',         color: '#ff3b5c' },
+  FORGING:         { label: 'Kodlanıyor',         color: '#a98bff' },
+  HEALING:         { label: 'Kendini onarıyor',   color: '#ff4d8d' },
+  FORGED:          { label: 'Derlendi',           color: '#a98bff' },
+  FORGE_FAILED:    { label: 'Derleme başarısız',  color: '#ff3b5c' },
+  DEPLOY_WAITING:  { label: 'Kota bekliyor',      color: '#ffb547' },
+  DEPLOYING:       { label: 'Dağıtılıyor',        color: '#4dffb4' },
+  DEPLOYED:        { label: 'Yayında',            color: '#3df5ff' },
+  DEPLOY_FAILED:   { label: 'Dağıtım başarısız',  color: '#ff3b5c' },
+  EVALUATING:      { label: 'Darwin testinde',    color: '#ff4d8d' },
+  IMMORTALIZED:    { label: 'Ölümsüz',            color: '#ffb547' },
+  TERMINATED:      { label: 'İmha edildi',        color: '#ff3b5c' },
+  BUDGET_EXCEEDED: { label: 'Bütçe aşıldı',       color: '#ff3b5c' },
+  FAILED:          { label: 'Hata',               color: '#ff3b5c' },
+};
+const FILTERS = [
+  { id: 'all',      label: 'Tümü',     match: () => true },
+  { id: 'council',  label: 'Konsey',   match: (s) => ['SCOUTED', 'IN_COUNCIL', 'APPROVED'].includes(s) },
+  { id: 'forge',    label: 'Üretim',   match: (s) => ['FORGING', 'HEALING', 'FORGED', 'DEPLOY_WAITING', 'DEPLOYING'].includes(s) },
+  { id: 'live',     label: 'Yayında',  match: (s) => ['DEPLOYED', 'EVALUATING'].includes(s) },
+  { id: 'immortal', label: 'Ölümsüz',  match: (s) => s === 'IMMORTALIZED' },
+  { id: 'dead',     label: 'Ölü',      match: (s) => ['REJECTED', 'FORGE_FAILED', 'DEPLOY_FAILED', 'TERMINATED', 'BUDGET_EXCEEDED', 'FAILED'].includes(s) },
+];
+const CAUSES = {
+  COUNCIL_REJECTED: 'Konsey reddi', COUNCIL_ERROR: 'Konsey hatası', FORGE_FAILED: 'Derleme başarısız', FORGE_ERROR: 'Forge hatası',
+  DEPLOY_FAILED: 'Dağıtım başarısız', TERMINATED: 'Kill-Switch', MANUAL_KILL: 'Operatör imhası', BUDGET_EXCEEDED: 'Bütçe sigortası',
+};
+const STAGE_NAMES = ['Sinyal', 'Konsey', 'Forge', 'Yayın', 'Karar'];
+
+// ─── Durum ──────────────────────────────────────────────────────────
+const S = {
+  dnas: new Map(), rules: null, graveyard: [], stats: null, queues: null, config: null,
+  filter: 'all', feedFilter: 'council', thinking: new Map(), warnings: [], feedIds: new Set(),
+};
+
+const $ = (selector, root = document) => root.querySelector(selector);
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = (v) => '$' + (Number(v) || 0).toFixed(4);
+const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); } catch { return ''; } };
+const fmtDate = (iso) => { try { return new Date(iso).toLocaleString('tr-TR'); } catch { return iso || ''; } };
+const kTok = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n || 0));
+
+const TOKEN_KEY = 'ghost-foundry:control-token';
+function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } }
+function setToken(value) { try { localStorage.setItem(TOKEN_KEY, value); } catch { /* depolama yok */ } }
+
+function toast(message, kind = 'info') {
+  const colors = { info: '#3df5ff', ok: '#4dffb4', error: '#ff3b5c', warn: '#ffb547' };
+  const el = document.createElement('div');
+  el.className = 'panel px-4 py-3 text-sm';
+  el.style.borderColor = colors[kind] || colors.info;
+  el.innerHTML = `<p style="color:${colors[kind] || colors.info}" class="font-semibold">${esc(message)}</p>`;
+  $('#toasts').appendChild(el);
+  setTimeout(() => el.remove(), kind === 'error' ? 7000 : 4000);
+}
+
+async function api(path, { method = 'GET', body } = {}, retried = false) {
+  const headers = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const token = getToken();
+  if (token) headers.Authorization = 'Bearer ' + token;
+  const res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  let data = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (res.status === 401 && !retried) {
+    const value = window.prompt('Bu Ghost Core bir kontrol jetonu istiyor (CONTROL_TOKEN):');
+    if (value) { setToken(value.trim()); return api(path, { method, body }, true); }
+  }
+  if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+  return data;
+}
+
+// ─── Üst bar ────────────────────────────────────────────────────────
+function renderHeader() {
+  const st = S.stats;
+  if (!st) return;
+  $('#m-gen').textContent = st.generation;
+  $('#m-cost').textContent = money(st.total_cost_usd);
+  $('#m-cap').textContent = '/ $' + st.budget_cap_usd;
+  $('#m-cost-bar').style.width = Math.min(100, (st.total_cost_usd / st.budget_cap_usd) * 100).toFixed(1) + '%';
+  $('#m-active').textContent = st.active_apps;
+  $('#m-max').textContent = st.max_active;
+  $('#m-dna').textContent = st.dna_total;
+  if (S.queues) $('#m-queue').textContent = S.queues.mode === 'bullmq' ? 'BullMQ/Redis' : 'Bellek';
+  if (S.config) $('#m-deploy').textContent = S.config.dry_run_docker ? 'Dry-run dağıtım' : 'Docker dağıtım';
+  $('#scout-meta').textContent = st.last_scout_at
+    ? `Son tarama ${fmtTime(st.last_scout_at)} · toplam ${st.scout_runs} tarama`
+    : 'HackerNews, GitHub ve Reddit henüz taranmadı.';
+  const scoutQ = S.queues?.queues?.['scout-queue'];
+  const busy = scoutQ && (scoutQ.active + scoutQ.waiting) > 0;
+  const btn = $('#btn-scout');
+  btn.disabled = Boolean(busy) || (S.config && !S.config.api_key_configured);
+  btn.textContent = busy ? 'Taranıyor…' : 'Radarı tara';
+}
+
+function renderWarnings() {
+  const box = $('#warnings');
+  if (!S.warnings.length) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  box.innerHTML = S.warnings.map((w) => `<p>△ ${esc(w)}</p>`).join('');
+}
+
+// ─── Kara kutu akışı ───────────────────────────────────────────────
+function feedEntryHtml(entry) {
+  if (entry.kind === 'debate') {
+    const role = ROLES[entry.role] || ROLES.system;
+    const content = entry.content || '';
+    const long = content.length > 360;
+    const body = !content ? '' : long
+      ? `<details class="mt-1"><summary class="feed-pre">${esc(content.slice(0, 260))}… <span class="text-neon-cyan">tamamı</span></summary><pre class="feed-pre mt-1">${esc(content)}</pre></details>`
+      : `<pre class="feed-pre mt-1">${esc(content)}</pre>`;
+    return `<li class="entry entry-debate" style="--role:${role.color}">
+      <div class="flex items-center gap-2 flex-wrap">
+        <time class="text-mute text-[11px] font-term tabular-nums">${fmtTime(entry.ts)}</time>
+        <span class="role-chip" style="--role:${role.color}">${role.icon} ${role.label}</span>
+        ${entry.dna_id ? `<button type="button" class="dna-ref" data-open="${esc(entry.dna_id)}" title="DNA ayrıntısı">${esc(entry.dna_id.slice(0, 8))}</button>` : ''}
+      </div>
+      <p class="mt-1 font-semibold leading-snug" style="color:${role.color}">${esc(entry.title)}</p>${body}</li>`;
+  }
+  const color = LEVEL_COLOR[entry.level] || LEVEL_COLOR.info;
+  return `<li class="entry entry-log font-term text-[12px] leading-5" style="--role:${color}">
+    <span class="text-mute tabular-nums">${fmtTime(entry.ts)}</span>
+    <span style="color:${color}">${esc(entry.level)}</span>
+    <span class="text-mute">[${esc(entry.organ)}]</span>
+    <span class="${entry.level === 'error' ? 'text-neon-blood' : 'text-haze/80'}">${esc(entry.message)}</span></li>`;
+}
+
+function appendFeed(entries) {
+  const feed = $('#feed');
+  const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80;
+  const html = entries.filter((e) => !S.feedIds.has(e.id)).map((e) => { S.feedIds.add(e.id); return feedEntryHtml(e); }).join('');
+  if (!html) return;
+  feed.insertAdjacentHTML('beforeend', html);
+  while (feed.children.length > 700) feed.removeChild(feed.firstElementChild);
+  if ($('#autoscroll').checked || nearBottom) feed.scrollTop = feed.scrollHeight;
+}
+
+function renderThinking() {
+  const box = $('#thinking');
+  box.innerHTML = [...S.thinking.values()].map((t) => {
+    const role = ROLES[t.role] || ROLES.system;
+    return `<p style="color:${role.color}"><span>${role.icon} ${role.label}</span> <span class="text-mute">${esc(t.label || 'çalışıyor')}</span><span class="dots"></span>${t.dna_id ? ` <span class="text-mute">${esc(t.dna_id.slice(0, 8))}</span>` : ''}</p>`;
+  }).join('');
+}
+
+function setFeedFilter(value) {
+  S.feedFilter = value;
+  $('#feed').dataset.filter = value;
+  document.querySelectorAll('.feed-tab').forEach((tab) => {
+    const active = tab.dataset.feed === value;
+    tab.setAttribute('aria-selected', String(active));
+    tab.className = 'px-2.5 py-1 feed-tab ' + (active ? 'bg-ink-700 text-haze' : 'text-mute hover:text-haze');
+  });
+  $('#feed').scrollTop = $('#feed').scrollHeight;
+}
+
+// ─── DNA hattı ──────────────────────────────────────────────────────
+const isParked = (dna) => Boolean(dna.error && dna.error.parked);
+const isRetryable = (dna) => isParked(dna) || ['FAILED', 'FORGE_FAILED', 'DEPLOY_FAILED', 'BUDGET_EXCEEDED'].includes(dna.status);
+
+function lifeline(dna) {
+  const s = dna.status;
+  if (isParked(dna)) {
+    const at = { council: 1, forge: 2, deploy: 3 }[dna.error.stage] ?? 1;
+    const cells = STAGE_NAMES.map((name, i) => `<span class="${i < at ? 'done' : i === at ? 'parked' : ''}" title="${name}"></span>`).join('');
+    return `<div class="lifeline" role="img" aria-label="Park edildi: ${esc(STAGE_NAMES[at])}">${cells}</div>
+      <div class="grid grid-cols-5 gap-[3px] mt-1 text-[10px] text-mute">${STAGE_NAMES.map((n) => `<span>${n}</span>`).join('')}</div>`;
+  }
+  const failStage = { REJECTED: 1, FORGE_FAILED: 2, DEPLOY_FAILED: 3, TERMINATED: 4 }[s]
+    ?? ((s === 'BUDGET_EXCEEDED' || s === 'FAILED') ? ({ council: 1, forge: 2, deploy: 3 }[dna.error?.stage] ?? 1) : null);
+  const active = { SCOUTED: 0, IN_COUNCIL: 1, FORGING: 2, HEALING: 2, DEPLOY_WAITING: 3, DEPLOYING: 3, EVALUATING: 4 }[s];
+  const doneUpTo = { APPROVED: 1, FORGED: 2, DEPLOYED: 3, IMMORTALIZED: 4 }[s];
+  const cells = STAGE_NAMES.map((name, i) => {
+    let cls = '';
+    if (failStage !== null && failStage !== undefined) cls = i < failStage ? 'done' : i === failStage ? 'fail' : '';
+    else if (s === 'IMMORTALIZED') cls = 'immortal';
+    else if (doneUpTo !== undefined) cls = i <= doneUpTo ? (s === 'DEPLOYED' && i === 3 ? 'live' : 'done') : '';
+    else if (active !== undefined) cls = i < active ? 'done' : i === active ? 'active' : '';
+    return `<span class="${cls}" title="${name}"></span>`;
+  }).join('');
+  return `<div class="lifeline" role="img" aria-label="Aşama: ${esc((STATUS[s] || {}).label || s)}">${cells}</div>
+    <div class="grid grid-cols-5 gap-[3px] mt-1 text-[10px] text-mute">${STAGE_NAMES.map((n) => `<span>${n}</span>`).join('')}</div>`;
+}
+
+function ttlLeft(dna) {
+  if (!dna.deployment?.expires_at || !['DEPLOYED', 'EVALUATING'].includes(dna.status)) return '';
+  return `<span class="font-term" data-expires="${esc(dna.deployment.expires_at)}">–</span>`;
+}
+
+function cardHtml(dna) {
+  const st = isParked(dna) ? { label: 'Park edildi', color: '#ffb547' } : (STATUS[dna.status] || { label: dna.status, color: '#8f88ad' });
+  const live = ['DEPLOYED', 'EVALUATING', 'IMMORTALIZED'].includes(dna.status);
+  const score = dna.score ?? null;
+  const scorePct = score === null ? 0 : Math.max(0, Math.min(100, score));
+  const thresholdPct = dna.threshold ?? 85;
+  const canEvaluate = dna.status === 'DEPLOYED';
+  const canKill = ['DEPLOYED', 'IMMORTALIZED', 'DEPLOY_WAITING'].includes(dna.status);
+  const url = dna.deployment?.url || `/apps/${dna.id}/`;
+  return `<article id="dna-${esc(dna.id)}" data-status="${esc(dna.status)}" class="border border-ink-700 rounded-lg bg-ink-900/70 p-3.5 flex flex-col gap-3" style="border-left:3px solid ${st.color}">
+    <header class="flex items-start gap-2">
+      <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap items-center gap-2 text-[11px] mb-1">
+          <span class="role-chip" style="--role:${st.color}">${esc(st.label)}</span>
+          <span class="text-mute">Nesil ${esc(dna.generation)}</span>
+          <span class="text-mute">${dna.origin === 'manual' ? 'Manuel sinyal' : esc(dna.source || 'radar')}</span>
+          <button type="button" class="dna-ref" data-open="${esc(dna.id)}">${esc(dna.id.slice(0, 8))}</button>
+        </div>
+        <h3 class="font-semibold text-[15px] leading-snug text-haze">${esc(dna.title)}</h3>
+        ${dna.tagline ? `<p class="text-[13px] text-mute leading-snug mt-0.5 line-clamp-2">${esc(dna.tagline)}</p>` : ''}
+      </div>
+    </header>
+    <div>${lifeline(dna)}</div>
+    <dl class="grid grid-cols-3 sm:grid-cols-5 gap-x-3 gap-y-2 text-xs">
+      <div class="col-span-1">
+        <dt class="text-mute">Konsey</dt>
+        <dd class="font-term font-semibold ${score === null ? 'text-mute' : score >= thresholdPct ? 'text-neon-mint' : 'text-neon-blood'}">${score === null ? '—' : score}<span class="text-mute font-normal">/100</span></dd>
+        <div class="relative h-1 mt-1 bg-ink-700 rounded"><div class="h-1 rounded" style="width:${scorePct}%;background:${score !== null && score >= thresholdPct ? '#4dffb4' : '#ff4d8d'}"></div><span class="absolute -top-0.5 w-px h-2 bg-haze" style="left:${thresholdPct}%" title="Eşik ${thresholdPct}"></span></div>
+      </div>
+      <div><dt class="text-mute">Maliyet</dt><dd class="font-term">${money(dna.cost_usd)}</dd></div>
+      <div><dt class="text-mute">Token</dt><dd class="font-term">${kTok(dna.total_tokens)}</dd></div>
+      <div><dt class="text-mute">Telemetri</dt><dd class="font-term text-neon-cyan font-semibold"><span id="ping-${esc(dna.id)}" class="px-1 rounded">${dna.telemetry_pings}</span> ping</dd></div>
+      <div><dt class="text-mute">${live ? (dna.status === 'IMMORTALIZED' ? 'Ziyaretçi' : 'Kalan TTL') : 'Self-heal'}</dt>
+        <dd class="font-term">${live ? (dna.status === 'IMMORTALIZED' ? esc(dna.unique_visitors) : ttlLeft(dna)) : (dna.heal_attempts === null || dna.heal_attempts === undefined ? '—' : esc(dna.heal_attempts) + ' tur')}</dd></div>
+    </dl>
+    ${dna.error && dna.error.message
+      ? `<p class="text-[12px] font-term leading-snug ${isParked(dna) ? 'text-neon-amber' : 'text-neon-blood/90'}">${esc(dna.error.message.slice(0, 220))}${isParked(dna) ? '<br><span class="text-mute">Fikir korunuyor: .env düzeltilip sunucu yeniden başlatılınca kendiliğinden devam eder.</span>' : ''}</p>`
+      : (dna.last_note ? `<p class="text-[12px] text-mute font-term leading-snug">${esc(dna.last_note)}</p>` : '')}
+    <div class="flex flex-wrap gap-1.5">
+      ${isRetryable(dna) ? `<button type="button" class="btn" data-action="retry" data-id="${esc(dna.id)}">Yeniden dene</button>` : ''}
+      ${live ? `<a class="btn btn-primary" href="${esc(url)}" target="_blank" rel="noopener">Aracı canlı aç</a>` : ''}
+      ${live ? `<button type="button" class="btn" data-action="ping" data-id="${esc(dna.id)}">Ping simüle et (+1)</button>` : ''}
+      ${canEvaluate ? `<button type="button" class="btn" data-action="evaluate" data-id="${esc(dna.id)}">Darwin testine sok</button>` : ''}
+      ${canKill ? `<button type="button" class="btn btn-danger" data-action="kill" data-id="${esc(dna.id)}">İmha et</button>` : ''}
+      <button type="button" class="btn ml-auto" data-open="${esc(dna.id)}">İncele</button>
+    </div>
+  </article>`;
+}
+
+function sortedDnas() {
+  return [...S.dnas.values()].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+}
+
+function renderFilters() {
+  const list = sortedDnas();
+  $('#filters').innerHTML = FILTERS.map((f) => {
+    const count = list.filter((d) => f.match(d.status)).length;
+    const active = S.filter === f.id;
+    return `<button type="button" role="tab" aria-selected="${active}" data-filter="${f.id}" class="px-2.5 py-1 rounded-md border ${active ? 'border-neon-cyan text-neon-cyan bg-neon-cyan/10' : 'border-ink-700 text-mute hover:text-haze'}">${f.label} <span class="font-term">${count}</span></button>`;
+  }).join('');
+}
+
+function renderPipeline() {
+  const filter = FILTERS.find((f) => f.id === S.filter) || FILTERS[0];
+  const list = sortedDnas().filter((d) => filter.match(d.status));
+  const box = $('#pipeline');
+  box.innerHTML = list.map(cardHtml).join('');
+  $('#pipeline-empty').classList.toggle('hidden', S.dnas.size > 0);
+  box.classList.toggle('hidden', S.dnas.size === 0);
+  if (S.dnas.size > 0 && list.length === 0) box.innerHTML = `<p class="text-mute text-sm p-4">Bu filtrede DNA yok.</p>`;
+  renderFilters();
+  tickTtl();
+}
+
+function upsertDna(summary) {
+  const previous = S.dnas.get(summary.id);
+  S.dnas.set(summary.id, summary);
+  const filter = FILTERS.find((f) => f.id === S.filter) || FILTERS[0];
+  const el = document.getElementById('dna-' + summary.id);
+  if (el && filter.match(summary.status)) {
+    el.outerHTML = cardHtml(summary);
+    renderFilters();
+    tickTtl();
+  } else {
+    renderPipeline();
+  }
+  if (previous && previous.status !== summary.status && ['IMMORTALIZED', 'TERMINATED'].includes(summary.status)) {
+    const card = document.getElementById('dna-' + summary.id);
+    if (card) {
+      card.style.setProperty('--flash', summary.status === 'IMMORTALIZED' ? 'rgba(255,181,71,.55)' : 'rgba(255,59,92,.55)');
+      card.classList.add('verdict-flash');
+    }
+  }
+}
+
+function tickTtl() {
+  const now = Date.now();
+  document.querySelectorAll('[data-expires]').forEach((el) => {
+    const left = Math.max(0, Date.parse(el.dataset.expires) - now);
+    const s = Math.floor(left / 1000);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    el.textContent = left === 0 ? 'süre doldu' : (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(sec).padStart(2, '0');
+    el.style.color = left < 60000 ? '#ff4d8d' : '';
+  });
+}
+
+// ─── Genom ve mezarlık ─────────────────────────────────────────────
+function ruleList(title, items, color) {
+  const body = items && items.length
+    ? items.map((rule) => `<li class="pl-3 border-l-2 leading-snug" style="border-color:${color}55">${esc(rule)}</li>`).join('')
+    : '<li class="text-mute">Henüz kural yok.</li>';
+  return `<div><h3 class="text-xs font-semibold mb-1.5" style="color:${color}">${title} <span class="text-mute font-term">${items ? items.length : 0}</span></h3><ul class="space-y-1.5">${body}</ul></div>`;
+}
+
+function renderGenome() {
+  const r = S.rules;
+  if (!r) return;
+  $('#g-gen').textContent = r.mutation_generation;
+  const ss = r.survival_stats || { immortalized: 0, terminated: 0 };
+  $('#g-survival').textContent = (ss.immortalized + ss.terminated)
+    ? `${ss.immortalized} ölümsüz, ${ss.terminated} imha · son mutasyon ${fmtDate(r.updated_at)}`
+    : 'Henüz Darwin testi yapılmadı; genom başlangıç kurallarında.';
+  const log = (r.mutation_log || []).slice(0, 15).map((m) => `<li class="text-[12px] leading-snug">
+      <span class="font-term text-neon-amber">#${esc(m.generation)}</span>
+      <span style="color:${m.verdict === 'IMMORTALIZED' ? '#ffb547' : '#ff3b5c'}">${m.verdict === 'IMMORTALIZED' ? 'ölümsüz' : 'imha'}</span>
+      <span class="text-haze">${esc(m.trigger_title)}</span> <span class="text-mute">(${esc(m.telemetry_pings)}/${esc(m.threshold)} ping, ${m.engine === 'llm' ? 'LLM' : 'sezgisel'})</span>
+      ${m.summary ? `<p class="text-mute mt-0.5">${esc(m.summary)}</p>` : ''}</li>`).join('');
+  $('#genome').innerHTML = [
+    ruleList('Tercih edilen paternler', r.preferred_patterns, '#4dffb4'),
+    ruleList('Yasaklı fikirler', r.banned_ideas, '#ff3b5c'),
+    ruleList('Arayüz kuralları', r.ui_guidelines, '#3df5ff'),
+    ruleList('Öğrenilen içgörüler', r.learned_insights, '#a98bff'),
+    `<details ${log ? '' : 'class="hidden"'}><summary class="text-xs font-semibold text-neon-amber">Mutasyon günlüğü (${(r.mutation_log || []).length})</summary><ol class="mt-2 space-y-2">${log}</ol></details>`,
+  ].join('');
+}
+
+function graveHtml(g) {
+  const cause = CAUSES[g.cause] || g.cause;
+  return `<li class="border border-ink-700 rounded-md p-2.5 text-[13px]">
+    <div class="flex items-center gap-2 mb-1 flex-wrap">
+      <span class="role-chip" style="--role:#ff3b5c">${esc(cause)}</span>
+      ${g.score !== null && g.score !== undefined ? `<span class="text-mute text-[11px] font-term">${esc(g.score)}/100</span>` : ''}
+      <span class="text-mute text-[11px] font-term">${esc(g.telemetry_pings)} ping · ${money(g.cost_usd)}</span>
+      ${g.dna_id ? `<button type="button" class="dna-ref ml-auto" data-open="${esc(g.dna_id)}">${esc(g.dna_id.slice(0, 8))}</button>` : ''}
+    </div>
+    <p class="font-semibold leading-snug">${esc(g.title)}</p>
+    ${g.summary ? `<p class="text-mute text-[12px] mt-0.5 leading-snug">${esc(g.summary)}</p>` : ''}
+    ${g.autopsy ? `<details class="mt-1"><summary class="text-[12px] text-neon-pink">Otopsi raporu</summary><p class="text-[12px] text-haze/80 mt-1 leading-snug">${esc(g.autopsy)}</p></details>` : ''}
+  </li>`;
+}
+
+function renderGraveyard() {
+  $('#gy-count').textContent = S.graveyard.length;
+  $('#graveyard').innerHTML = S.graveyard.length
+    ? S.graveyard.map(graveHtml).join('')
+    : `<li class="text-mute text-sm">Mezarlık boş. Konsey'in reddettiği ve Reaper'ın imha ettiği araçlar burada otopsileriyle birlikte durur.</li>`;
+}
+
+// ─── DNA ayrıntısı ─────────────────────────────────────────────────
+function section(title, inner) { return `<section><h3 class="text-sm font-semibold text-neon-violet mb-2">${title}</h3>${inner}</section>`; }
+function jsonBlock(value) { return `<pre class="feed-pre bg-ink-950 border border-ink-700 rounded-md p-3 max-h-80 overflow-auto scroll-thin">${esc(JSON.stringify(value, null, 2))}</pre>`; }
+function kv(rows) {
+  return `<dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-[13px]">${rows.filter(Boolean).map(([k, v]) => `<dt class="text-mute">${k}</dt><dd class="break-words">${v}</dd>`).join('')}</dl>`;
+}
+
+async function openDetail(id) {
+  const dialog = $('#detail');
+  $('#detail-title').textContent = 'DNA ' + id.slice(0, 8);
+  $('#detail-body').innerHTML = '<p class="text-mute">Yükleniyor…</p>';
+  if (!dialog.open) dialog.showModal();
+  try {
+    const { dna, debate } = await api('/api/dna/' + encodeURIComponent(id));
+    const spec = dna.council?.upgraded_spec || dna.council?.proposer_spec;
+    $('#detail-title').textContent = (spec?.tool_name || dna.title) + ' — ' + ((STATUS[dna.status] || {}).label || dna.status);
+    const parts = [];
+    parts.push(section('Sinyal', kv([
+      ['Başlık', esc(dna.signal.title)],
+      ['Acı noktası', esc(dna.signal.pain_point)],
+      dna.signal.evidence ? ['Kanıt', esc(dna.signal.evidence)] : null,
+      ['Hedef kullanıcı', esc(dna.signal.target_user || '—')],
+      dna.signal.url ? ['Kaynak', `<a class="text-neon-cyan underline" href="${esc(dna.signal.url)}" target="_blank" rel="noopener noreferrer">${esc(dna.signal.url)}</a>`] : null,
+      ['Aciliyet', esc(dna.signal.urgency ?? '—')],
+    ])));
+    if (dna.council) {
+      const objections = dna.council.critic_objections?.objections || [];
+      parts.push(section(`Konsey kararı: ${esc(dna.council.final_score ?? '—')}/100`, [
+        dna.council.rationale ? `<p class="text-[13px] mb-2">${esc(dna.council.rationale)}</p>` : '',
+        objections.length ? `<ul class="space-y-1.5 mb-3 text-[13px]">${objections.map((o, i) => {
+          const ruling = (dna.council.rulings || [])[i];
+          return `<li class="pl-3 border-l-2 border-neon-pink/50"><span class="text-neon-pink">${esc(o.severity)}</span> <span class="text-mute">[${esc(o.area)}]</span> ${esc(o.issue)}${ruling ? `<br><span class="${ruling.accepted ? 'text-neon-mint' : 'text-mute'}">${ruling.accepted ? 'Kabul' : 'Ret'}:</span> ${esc(ruling.resolution)}` : ''}</li>`;
+        }).join('')}</ul>` : '',
+        `<details><summary class="text-xs text-neon-cyan">Nihai spesifikasyon (upgraded_spec)</summary>${jsonBlock(dna.council.upgraded_spec)}</details>`,
+        dna.council.proposer_spec ? `<details class="mt-1"><summary class="text-xs text-mute">Vizyonerin ilk önerisi</summary>${jsonBlock(dna.council.proposer_spec)}</details>` : '',
+      ].join('')));
+    }
+    if (dna.forge) {
+      const healRows = (dna.forge.heal_log || []).map((h) => `<li class="text-[13px]"><span class="font-term ${h.ok ? 'text-neon-mint' : 'text-neon-pink'}">#${h.attempt} ${h.ok ? 'temiz' : h.errors.length + ' hata'}</span>
+        ${h.errors.length ? `<ul class="mt-1 ml-4 list-disc text-mute text-[12px]">${h.errors.slice(0, 6).map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}</li>`).join('');
+      parts.push(section('Forge ve self-healing', kv([
+        ['Yama turu', esc(dna.forge.heal_attempts ?? 0)],
+        dna.forge.bytes ? ['Boyut', ((dna.forge.bytes) / 1024).toFixed(1) + ' KB'] : null,
+        dna.forge.artifact_path ? ['Dosya', `<span class="font-term">${esc(dna.forge.artifact_path)}</span>`] : null,
+        dna.forge.duration_ms ? ['Süre', Math.round(dna.forge.duration_ms / 1000) + ' sn'] : null,
+      ]) + (healRows ? `<ol class="mt-2 space-y-2">${healRows}</ol>` : '')));
+    }
+    if (dna.deployment) {
+      parts.push(section('Dağıtım', kv([
+        ['Mod', esc(dna.deployment.mode || '—')],
+        dna.deployment.url ? ['Adres', `<a class="text-neon-cyan underline" href="${esc(dna.deployment.url)}" target="_blank" rel="noopener">${esc(dna.deployment.url)}</a>`] : null,
+        dna.deployment.container_name ? ['Konteyner', `<span class="font-term">${esc(dna.deployment.container_name)}</span>`] : null,
+        dna.deployment.deployed_at ? ['Yayın', fmtDate(dna.deployment.deployed_at)] : null,
+        dna.deployment.expires_at ? ['Darwin testi', fmtDate(dna.deployment.expires_at)] : null,
+      ])));
+    }
+    parts.push(section('Telemetri', kv([
+      ['Ping', `<span class="font-term text-neon-cyan">${esc(dna.telemetry_pings)}</span>`],
+      ['Tekil ziyaretçi', esc(dna.telemetry?.unique_visitors ?? 0)],
+      ['Olaylar', esc(Object.entries(dna.telemetry?.events || {}).map(([k, v]) => k + ': ' + v).join(', ') || '—')],
+      dna.evaluation ? ['Karar', `<span style="color:${dna.evaluation.verdict === 'IMMORTALIZED' ? '#ffb547' : '#ff3b5c'}">${esc(dna.evaluation.verdict)}</span> (${esc(dna.evaluation.pings_at_eval)}/${esc(dna.evaluation.threshold)})`] : null,
+      dna.evaluation?.autopsy ? ['Otopsi', esc(dna.evaluation.autopsy)] : null,
+    ])));
+    const calls = (dna.token_usage?.calls || []).slice().reverse();
+    parts.push(section(`Maliyet: ${money(dna.token_usage?.cost_usd)} · ${kTok(dna.token_usage?.total_tokens)} token`, calls.length
+      ? `<div class="overflow-x-auto"><table class="w-full text-[12px] font-term"><thead class="text-mute text-left"><tr><th class="pr-3 py-1">Ajan</th><th class="pr-3">Model</th><th class="pr-3">Girdi</th><th class="pr-3">Çıktı</th><th class="pr-3">USD</th><th>Saat</th></tr></thead><tbody>${calls.map((c) => `<tr class="border-t border-ink-700"><td class="pr-3 py-1">${esc(c.agent)}</td><td class="pr-3 text-mute">${esc(c.model)}</td><td class="pr-3">${esc(c.prompt_tokens)}</td><td class="pr-3">${esc(c.completion_tokens)}</td><td class="pr-3">${money(c.cost_usd)}</td><td class="text-mute">${fmtTime(c.at)}</td></tr>`).join('')}</tbody></table></div>`
+      : '<p class="text-mute text-sm">Henüz LLM çağrısı yok.</p>'));
+    parts.push(section('Geçmiş', `<ol class="space-y-1 text-[12px] font-term">${(dna.history || []).slice().reverse().map((h) => `<li><span class="text-mute">${fmtTime(h.at)}</span> <span style="color:${(STATUS[h.status] || {}).color || '#8f88ad'}">${esc(h.status)}</span> ${esc(h.note || '')}</li>`).join('')}</ol>`));
+    if (debate && debate.length) {
+      parts.push(section('Bu DNA\'nın tartışma kaydı', `<ol class="space-y-1.5">${debate.map((d) => feedEntryHtml({ ...d, kind: 'debate' })).join('')}</ol>`));
+    }
+    $('#detail-body').innerHTML = parts.join('');
+  } catch (err) {
+    $('#detail-body').innerHTML = `<p class="text-neon-blood">${esc(err.message)}</p>`;
+  }
+}
+
+// ─── Eylemler ───────────────────────────────────────────────────────
+async function simulatePing(id) {
+  try {
+    const res = await fetch('/api/telemetry/' + encodeURIComponent(id), { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ event: 'simulated' }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  } catch (err) { toast('Ping gönderilemedi: ' + err.message, 'error'); }
+}
+
+async function handleAction(action, id, button) {
+  const dna = S.dnas.get(id);
+  const name = dna ? dna.title : id.slice(0, 8);
+  if (action === 'ping') return simulatePing(id);
+  button.disabled = true;
+  try {
+    if (action === 'retry') {
+      const res = await api('/api/dna/' + encodeURIComponent(id) + '/retry', { method: 'POST', body: {} });
+      toast(`Yeniden kuyrukta (${res.stage}): ${name}`, 'ok');
+      setFeedFilter('council');
+    } else if (action === 'evaluate') {
+      await api('/api/reaper/evaluate/' + encodeURIComponent(id), { method: 'POST', body: {} });
+      toast(`Darwin testi başladı: ${name}`, 'ok');
+    } else if (action === 'kill') {
+      if (!window.confirm(`«${name}» imha edilsin mi? Konteyner durdurulur ve araç mezarlığa taşınır.`)) { button.disabled = false; return; }
+      await api('/api/dna/' + encodeURIComponent(id) + '/terminate', { method: 'POST', body: { reason: 'Operatör panelden imha etti' } });
+      toast(`İmha edildi: ${name}`, 'warn');
+    }
+  } catch (err) {
+    toast(err.message, 'error');
+    button.disabled = false;
+  }
+}
+
+// ─── Başlangıç ──────────────────────────────────────────────────────
+async function loadState() {
+  const state = await api('/api/state');
+  S.config = state.config;
+  S.stats = state.stats;
+  S.queues = state.queues;
+  S.rules = state.rules;
+  S.graveyard = state.graveyard || [];
+  S.warnings = state.warnings || [];
+  S.dnas = new Map((state.dnas || []).map((d) => [d.id, d]));
+  const feed = [
+    ...(state.recent_debate || []).map((e) => ({ ...e, kind: 'debate' })),
+    ...(state.recent_logs || []).map((e) => ({ ...e, kind: 'log' })),
+  ].sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+  $('#feed').innerHTML = '';
+  S.feedIds.clear();
+  appendFeed(feed);
+  renderHeader();
+  renderWarnings();
+  renderPipeline();
+  renderGenome();
+  renderGraveyard();
+}
+
+function connectSocket() {
+  const socket = io({ auth: { token: getToken() }, transports: ['websocket', 'polling'] });
+  const setConn = (ok, text) => {
+    $('#conn-dot').className = 'inline-block w-2.5 h-2.5 rounded-full ' + (ok ? 'bg-neon-mint' : 'bg-neon-blood');
+    $('#conn-text').textContent = text;
+  };
+  socket.on('connect', () => { setConn(true, 'Canlı'); loadState().catch((err) => toast('Durum yüklenemedi: ' + err.message, 'error')); });
+  socket.on('disconnect', () => setConn(false, 'Bağlantı koptu, yeniden deneniyor'));
+  socket.on('connect_error', (err) => {
+    setConn(false, 'Bağlanılamıyor');
+    if (err && err.message === 'unauthorized') {
+      const value = window.prompt('Bu Ghost Core bir kontrol jetonu istiyor (CONTROL_TOKEN):');
+      if (value) { setToken(value.trim()); socket.auth = { token: value.trim() }; socket.connect(); }
+    }
+  });
+  socket.on('log', (entry) => appendFeed([{ ...entry, kind: 'log' }]));
+  socket.on('debate', (entry) => appendFeed([{ ...entry, kind: 'debate' }]));
+  socket.on('dna:update', (summary) => upsertDna(summary));
+  socket.on('rules:update', (rules) => { S.rules = rules; renderGenome(); });
+  socket.on('graveyard:update', (entry) => { S.graveyard.unshift(entry); S.graveyard = S.graveyard.slice(0, 100); renderGraveyard(); });
+  socket.on('graveyard:remove', ({ dna_id }) => { S.graveyard = S.graveyard.filter((g) => g.dna_id !== dna_id); renderGraveyard(); });
+  socket.on('stats', (payload) => { S.stats = payload.stats; S.queues = payload.queues; renderHeader(); });
+  socket.on('agent:thinking', (t) => {
+    const key = t.role + '|' + (t.dna_id || '');
+    if (t.active) S.thinking.set(key, t); else S.thinking.delete(key);
+    renderThinking();
+  });
+  socket.on('telemetry', (t) => {
+    const el = document.getElementById('ping-' + t.dna_id);
+    if (el) { el.textContent = t.telemetry_pings; el.classList.remove('ping-flash'); void el.offsetWidth; el.classList.add('ping-flash'); }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  setFeedFilter('council');
+  document.querySelectorAll('.feed-tab').forEach((tab) => tab.addEventListener('click', () => setFeedFilter(tab.dataset.feed)));
+
+  $('#filters').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-filter]');
+    if (!btn) return;
+    S.filter = btn.dataset.filter;
+    renderPipeline();
+  });
+
+  document.body.addEventListener('click', (e) => {
+    const opener = e.target.closest('[data-open]');
+    if (opener) { openDetail(opener.dataset.open); return; }
+    const actionBtn = e.target.closest('[data-action]');
+    if (actionBtn) handleAction(actionBtn.dataset.action, actionBtn.dataset.id, actionBtn);
+  });
+
+  $('#detail-close').addEventListener('click', () => $('#detail').close());
+  $('#detail').addEventListener('click', (e) => { if (e.target === $('#detail')) $('#detail').close(); });
+
+  $('#btn-scout').addEventListener('click', async () => {
+    const btn = $('#btn-scout');
+    btn.disabled = true;
+    btn.textContent = 'Taranıyor…';
+    try {
+      await api('/api/scout/trigger', { method: 'POST', body: {} });
+      toast('Radar taraması başladı', 'ok');
+      setFeedFilter('council');
+    } catch (err) {
+      toast(err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Radarı tara';
+    }
+  });
+
+  $('#inject-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const data = Object.fromEntries(new FormData(form).entries());
+    const errorBox = $('#inj-error');
+    errorBox.textContent = '';
+    if ((data.title || '').trim().length < 4) { errorBox.textContent = 'Darboğazın adı en az 4 karakter olmalı.'; $('#inj-title').focus(); return; }
+    if ((data.description || '').trim().length < 10) { errorBox.textContent = 'Sorunu en az 10 karakterle anlat.'; $('#inj-desc').focus(); return; }
+    const btn = $('#btn-inject');
+    btn.disabled = true;
+    try {
+      const res = await api('/api/scout/inject', { method: 'POST', body: data });
+      form.reset();
+      toast('Sinyal Konsey\'e gönderildi: ' + res.dna.title, 'ok');
+      setFeedFilter('council');
+    } catch (err) {
+      errorBox.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  setInterval(tickTtl, 1000);
+  connectSocket();
+});
+</script>
+</body>
+</html>
